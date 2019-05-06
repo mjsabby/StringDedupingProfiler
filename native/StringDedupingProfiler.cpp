@@ -36,8 +36,7 @@ static HRESULT EachObjectReference(WalkObjectContext *context, ObjectID curr, in
     {
         COR_PRF_GC_GENERATION_RANGE range;
         IfFailRet(context->CorProfilerInfo->GetObjectGeneration(objectReference, &range));
-
-        // if (range.generation > 1) // Uncomment for real world
+        if (range.generation > 1)   
         {
             ULONG objectReferenceStringLength = *(PULONG)((PBYTE)objectReference + context->StringLengthOffset);
             PBYTE objectReferenceStringData = (PBYTE)objectReference + context->StringBufferOffset;
@@ -46,19 +45,24 @@ static HRESULT EachObjectReference(WalkObjectContext *context, ObjectID curr, in
             auto iter = hashToObjectIDMap->find(hash);
             if (iter == hashToObjectIDMap->end())
             {
-                hashToObjectIDMap->insert(std::pair<ULONG, ObjectID>(hash, objectReference));
+                 hashToObjectIDMap->insert(std::pair<ULONG, ObjectID>(hash, objectReference));
             }
             else
             {
                 ObjectID existingObjectId = iter->second;
-                ULONG existingStringLength = *(PULONG)((PBYTE)existingObjectId + context->StringLengthOffset);
-                PBYTE existingStringData = (PBYTE)existingObjectId + context->StringBufferOffset;
 
-                if (objectReferenceStringLength == existingStringLength)
+                if (existingObjectId != objectReference)
                 {
-                    if (memcmp(objectReferenceStringData, existingStringData, (SIZE_T)existingStringLength) == 0)
+                    ULONG existingStringLength = *(PULONG)((PBYTE)existingObjectId + context->StringLengthOffset);
+                    PBYTE existingStringData = (PBYTE)existingObjectId + context->StringBufferOffset;
+
+                    if (objectReferenceStringLength == existingStringLength && existingStringLength != 0)
                     {
-                        *(ObjectID *)((PBYTE)curr + offset) = existingObjectId;
+                        wprintf(L"Deduping: %s\n", (WCHAR*)objectReferenceStringData);
+                        if (memcmp(objectReferenceStringData, existingStringData, (SIZE_T)existingStringLength) == 0)
+                        {
+                            *(ObjectID*)((PBYTE)curr + offset) = existingObjectId;
+                        }
                     }
                 }
             }
@@ -84,12 +88,10 @@ HRESULT StringDedupingProfiler::GarbageCollectionStartedCore(int cGenerations)
 
     for (auto &s : objectRanges)
     {
-        /*
         if (s.generation < COR_PRF_GC_GEN_2)
         {
             continue;
         }
-        */
 
         BOOL frozen;
         IfFailRet(this->corProfilerInfo->IsFrozenObject(s.rangeStart, &frozen));
@@ -134,7 +136,7 @@ HRESULT StringDedupingProfiler::GarbageCollectionStartedCore(int cGenerations)
     return S_OK;
 }
 
-StringDedupingProfiler::StringDedupingProfiler() : refCount(0), corProfilerInfo(nullptr), stringMethodTable(0), stringLengthOffset(0), stringBufferOffset(0)
+StringDedupingProfiler::StringDedupingProfiler() : nextGCIsSuspended(false), refCount(0), corProfilerInfo(nullptr), stringMethodTable(0), stringLengthOffset(0), stringBufferOffset(0)
 {
 }
 
@@ -350,36 +352,59 @@ HRESULT STDMETHODCALLTYPE StringDedupingProfiler::ManagedToUnmanagedTransition(F
 
 HRESULT STDMETHODCALLTYPE StringDedupingProfiler::RuntimeSuspendStarted(COR_PRF_SUSPEND_REASON suspendReason)
 {
+    if (suspendReason == COR_PRF_SUSPEND_FOR_GC)
+    {
+        printf("RuntimeSuspendStarted COR_PRF_SUSPEND_FOR_GC\n");
+        this->nextGCIsSuspended = true;
+    }
+
+    if (suspendReason == COR_PRF_SUSPEND_FOR_GC_PREP)
+    {
+        printf("RuntimeSuspendStarted COR_PRF_SUSPEND_FOR_GC_PREP\n");
+    }
+
     return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE StringDedupingProfiler::RuntimeSuspendFinished()
 {
+    printf("RuntimeSuspendFinished.\n");
     return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE StringDedupingProfiler::RuntimeSuspendAborted()
 {
+    printf("RuntimeSuspendAborted.\n");
+
     return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE StringDedupingProfiler::RuntimeResumeStarted()
 {
+    printf("RuntimeResumeStarted\n");
+
+    this->nextGCIsSuspended = false;
+
     return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE StringDedupingProfiler::RuntimeResumeFinished()
 {
+    printf("RuntimeResumeFinished\n");
+
     return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE StringDedupingProfiler::RuntimeThreadSuspended(ThreadID threadId)
 {
+    printf("RuntimeThreadSuspended %llu\n", threadId);
+
     return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE StringDedupingProfiler::RuntimeThreadResumed(ThreadID threadId)
 {
+    printf("RuntimeThreadResumed %llu\n", threadId);
     return S_OK;
 }
 
@@ -505,7 +530,8 @@ HRESULT STDMETHODCALLTYPE StringDedupingProfiler::ThreadNameChanged(ThreadID thr
 
 HRESULT STDMETHODCALLTYPE StringDedupingProfiler::GarbageCollectionStarted(int cGenerations, BOOL generationCollected[], COR_PRF_GC_REASON reason)
 {
-    this->GarbageCollectionStartedCore(cGenerations);
+    printf("GarbageCollectionStarted\n");
+
     return S_OK;
 }
 
@@ -516,6 +542,14 @@ HRESULT STDMETHODCALLTYPE StringDedupingProfiler::SurvivingReferences(ULONG cSur
 
 HRESULT STDMETHODCALLTYPE StringDedupingProfiler::GarbageCollectionFinished()
 {
+    if (this->nextGCIsSuspended)
+    {
+        printf("Deduping\n");
+        this->GarbageCollectionStartedCore(5);
+    }
+
+    printf("GarbageCollectionFinished\n");
+
     return S_OK;
 }
 
@@ -556,7 +590,7 @@ HRESULT STDMETHODCALLTYPE StringDedupingProfiler::InitializeForAttach(IUnknown *
     IfFailRet(this->corProfilerInfo->GetStringLayout2(&this->stringLengthOffset, &this->stringBufferOffset));
     this->stringMethodTable = *(SIZE_T *)pvClientData;
 
-    return this->corProfilerInfo->SetEventMask2(0, COR_PRF_HIGH_BASIC_GC);
+    return this->corProfilerInfo->SetEventMask2(COR_PRF_MONITOR_SUSPENDS, COR_PRF_HIGH_BASIC_GC);
 }
 
 HRESULT STDMETHODCALLTYPE StringDedupingProfiler::ProfilerAttachComplete()

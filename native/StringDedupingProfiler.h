@@ -149,6 +149,7 @@ class StringDedupingProfiler : public ICorProfilerCallback9
     }
 
   private:
+    bool nextGCIsSuspended;
     std::atomic<int> refCount;
     ICorProfilerInfo10 *corProfilerInfo;
     SIZE_T stringMethodTable;
