@@ -4,9 +4,14 @@
 #include <vector>
 #include <cstddef>
 #include "corhlpr.h"
-#include "CComPtr.h"
 #include "StringDedupingProfiler.h"
 #include "GCDesc.h"
+
+extern "C" HRESULT InitializeStringDeduper(LPCWSTR profilerPath, SIZE_T stringMethodTable, void *clrProfiling)
+{
+    const GUID CLSID_CorProfiler = {0x4175c64e, 0x5ae0, 0x45df, {0xab, 0x4f, 0x06, 0xd9, 0xc4, 0xc6, 0x79, 0x5c}};
+    return ((ICLRProfiling *)clrProfiling)->AttachProfiler(GetCurrentProcessId(), 1000, &CLSID_CorProfiler, profilerPath, (void *)&stringMethodTable, sizeof(SIZE_T));
+}
 
 static ULONG hashFunction(ULONG length, const PBYTE str)
 {
@@ -25,15 +30,14 @@ static HRESULT EachObjectReference(WalkObjectContext *context, ObjectID curr, in
     auto hashToObjectIDMap = context->HashToObjectIDMap;
 
     ObjectID objectReference = (ObjectID)(*(ObjectID *)((PBYTE)curr + offset));
-    ClassID classId;
-    IfFailRet(context->CorProfilerInfo->GetClassFromObject(objectReference, &classId));
+    auto methodTable = *(SIZE_T *)objectReference;
 
-    if (classId == context->StringTypeHandle)
+    if (methodTable == context->StringMethodTable)
     {
         COR_PRF_GC_GENERATION_RANGE range;
         IfFailRet(context->CorProfilerInfo->GetObjectGeneration(objectReference, &range));
 
-        if (range.generation > 1)
+        // if (range.generation > 1) // Uncomment for real world
         {
             ULONG objectReferenceStringLength = *(PULONG)((PBYTE)objectReference + context->StringLengthOffset);
             PBYTE objectReferenceStringData = (PBYTE)objectReference + context->StringBufferOffset;
@@ -76,14 +80,16 @@ HRESULT StringDedupingProfiler::GarbageCollectionStartedCore(int cGenerations)
     std::vector<COR_PRF_GC_GENERATION_RANGE> objectRanges(cObjectRanges);
     IfFailRet(this->corProfilerInfo->GetGenerationBounds(cObjectRanges, &cObjectRanges, objectRanges.data()));
 
-    WalkObjectContext context(this->corProfilerInfo, this->stringTypeHandle, &this->hashToObjectMap, this->stringLengthOffset, this->stringBufferOffset);
+    WalkObjectContext context(this->corProfilerInfo, this->stringMethodTable, &this->hashToObjectMap, this->stringLengthOffset, this->stringBufferOffset);
 
     for (auto &s : objectRanges)
     {
+        /*
         if (s.generation < COR_PRF_GC_GEN_2)
         {
             continue;
         }
+        */
 
         BOOL frozen;
         IfFailRet(this->corProfilerInfo->IsFrozenObject(s.rangeStart, &frozen));
@@ -128,32 +134,7 @@ HRESULT StringDedupingProfiler::GarbageCollectionStartedCore(int cGenerations)
     return S_OK;
 }
 
-HRESULT StringDedupingProfiler::ClassLoadFinishedCore(ClassID classId)
-{
-    ModuleID moduleId;
-    mdTypeDef typeDef;
-
-    IfFailRet(this->corProfilerInfo->GetClassIDInfo(classId, &moduleId, &typeDef));
-
-    CComPtr<IMetaDataImport> metadataImport;
-    IfFailRet(this->corProfilerInfo->GetModuleMetaData(moduleId, ofRead, IID_IMetaDataImport, reinterpret_cast<IUnknown **>(&metadataImport)));
-
-    ULONG chTypeDef;
-
-    IfFailRet(metadataImport->GetTypeDefProps(typeDef, nullptr, 0, &chTypeDef, nullptr, nullptr));
-    std::wstring typeDefName(chTypeDef, '\0');
-    IfFailRet(metadataImport->GetTypeDefProps(typeDef, &typeDefName[0], chTypeDef, &chTypeDef, nullptr, nullptr));
-
-    if (_wcsnicmp(typeDefName.c_str(), SystemString, COUNTOF(SystemString)) == 0)
-    {
-        this->stringTypeHandle = classId;
-        IfFailRet(this->corProfilerInfo->GetStringLayout2(&this->stringLengthOffset, &this->stringBufferOffset));
-    }
-
-    return S_OK;
-}
-
-StringDedupingProfiler::StringDedupingProfiler() : refCount(0), corProfilerInfo(nullptr), stringTypeHandle(0), stringLengthOffset(0), stringBufferOffset(0)
+StringDedupingProfiler::StringDedupingProfiler() : refCount(0), corProfilerInfo(nullptr), stringMethodTable(0), stringLengthOffset(0), stringBufferOffset(0)
 {
 }
 
@@ -168,14 +149,7 @@ StringDedupingProfiler::~StringDedupingProfiler()
 
 HRESULT STDMETHODCALLTYPE StringDedupingProfiler::Initialize(IUnknown *pICorProfilerInfoUnk)
 {
-    HRESULT queryInterfaceResult = pICorProfilerInfoUnk->QueryInterface(__uuidof(ICorProfilerInfo10), reinterpret_cast<void **>(&this->corProfilerInfo));
-
-    if (FAILED(queryInterfaceResult))
-    {
-        return E_FAIL;
-    }
-
-    return this->corProfilerInfo->SetEventMask2(COR_PRF_MONITOR_CLASS_LOADS, COR_PRF_HIGH_BASIC_GC);
+    return S_OK;
 }
 
 HRESULT STDMETHODCALLTYPE StringDedupingProfiler::Shutdown()
@@ -261,11 +235,6 @@ HRESULT STDMETHODCALLTYPE StringDedupingProfiler::ClassLoadStarted(ClassID class
 
 HRESULT STDMETHODCALLTYPE StringDedupingProfiler::ClassLoadFinished(ClassID classId, HRESULT hrStatus)
 {
-    if (hrStatus == S_OK)
-    {
-        this->ClassLoadFinishedCore(classId);
-    }
-
     return S_OK;
 }
 
@@ -572,7 +541,22 @@ HRESULT STDMETHODCALLTYPE StringDedupingProfiler::HandleDestroyed(GCHandleID han
 
 HRESULT STDMETHODCALLTYPE StringDedupingProfiler::InitializeForAttach(IUnknown *pCorProfilerInfoUnk, void *pvClientData, UINT cbClientData)
 {
-    return S_OK;
+    HRESULT queryInterfaceResult = pCorProfilerInfoUnk->QueryInterface(__uuidof(ICorProfilerInfo10), reinterpret_cast<void **>(&this->corProfilerInfo));
+
+    if (FAILED(queryInterfaceResult))
+    {
+        return E_FAIL;
+    }
+
+    if (cbClientData != sizeof(SIZE_T))
+    {
+        return E_FAIL;
+    }
+
+    IfFailRet(this->corProfilerInfo->GetStringLayout2(&this->stringLengthOffset, &this->stringBufferOffset));
+    this->stringMethodTable = *(SIZE_T *)pvClientData;
+
+    return this->corProfilerInfo->SetEventMask2(0, COR_PRF_HIGH_BASIC_GC);
 }
 
 HRESULT STDMETHODCALLTYPE StringDedupingProfiler::ProfilerAttachComplete()

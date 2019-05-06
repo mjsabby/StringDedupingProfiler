@@ -151,7 +151,6 @@
     <ClCompile Include="StringDedupingProfiler.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="CComPtr.h" />
     <ClInclude Include="ClassFactory.h" />
     <ClInclude Include="GCDesc.h" />
     <ClInclude Include="StringDedupingProfiler.h" />

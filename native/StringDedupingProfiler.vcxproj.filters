@@ -29,9 +29,6 @@
     <ClInclude Include="ClassFactory.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="CComPtr.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="StringDedupingProfiler.h">
       <Filter>Header Files</Filter>
     </ClInclude>

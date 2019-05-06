@@ -151,14 +151,13 @@ class StringDedupingProfiler : public ICorProfilerCallback9
   private:
     std::atomic<int> refCount;
     ICorProfilerInfo10 *corProfilerInfo;
-    ClassID stringTypeHandle;
+    SIZE_T stringMethodTable;
     ULONG stringLengthOffset;
     ULONG stringBufferOffset;
     std::unordered_map<ULONG, ObjectID> hashToObjectMap;
 
   private:
     HRESULT GarbageCollectionStartedCore(int cGenerations);
-    HRESULT ClassLoadFinishedCore(ClassID classId);
 };
 
 #undef IfFailRet
@@ -174,5 +173,3 @@ class StringDedupingProfiler : public ICorProfilerCallback9
 
 #define align_up(num, align) \
     (((num) + ((align)-1)) & ~((align)-1))
-
-#define SystemString L"System.String"

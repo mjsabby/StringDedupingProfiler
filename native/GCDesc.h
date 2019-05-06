@@ -2,12 +2,12 @@
 
 struct WalkObjectContext
 {
-    WalkObjectContext(ICorProfilerInfo10 *corProfilerInfo, ClassID stringTypeHandle, std::unordered_map<ULONG, ObjectID> *hashToObjectIDMap, ULONG stringLengthOffset, ULONG stringBufferOffset) : CorProfilerInfo(corProfilerInfo), StringTypeHandle(stringTypeHandle), HashToObjectIDMap(hashToObjectIDMap), StringLengthOffset(stringLengthOffset), StringBufferOffset(stringBufferOffset)
+    WalkObjectContext(ICorProfilerInfo10 *corProfilerInfo, SIZE_T stringMethodTable, std::unordered_map<ULONG, ObjectID> *hashToObjectIDMap, ULONG stringLengthOffset, ULONG stringBufferOffset) : CorProfilerInfo(corProfilerInfo), StringMethodTable(stringMethodTable), HashToObjectIDMap(hashToObjectIDMap), StringLengthOffset(stringLengthOffset), StringBufferOffset(stringBufferOffset)
     {
     }
 
     ICorProfilerInfo10 *CorProfilerInfo;
-    ClassID StringTypeHandle;
+    SIZE_T StringMethodTable;
     std::unordered_map<ULONG, ObjectID> *HashToObjectIDMap;
     ULONG StringLengthOffset;
     ULONG StringBufferOffset;

@@ -3,3 +3,4 @@ LIBRARY "StringDedupingProfiler.dll"
 EXPORTS
     DllCanUnloadNow PRIVATE
     DllGetClassObject PRIVATE
+    InitializeStringDeduper
