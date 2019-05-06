@@ -24,11 +24,8 @@ static HRESULT EachObjectReference(WalkObjectContext *context, ObjectID curr, in
 {
     auto hashToObjectIDMap = context->HashToObjectIDMap;
 
-    ObjectID objectReference = (ObjectID)((PBYTE)curr + offset);
+    ObjectID objectReference = (ObjectID)(*(ObjectID *)((PBYTE)curr + offset));
     ClassID classId;
-
-    SIZE_T size;
-    IfFailRet(context->CorProfilerInfo->GetObjectSize2(objectReference, &size));
     IfFailRet(context->CorProfilerInfo->GetClassFromObject(objectReference, &classId));
 
     if (classId == context->StringTypeHandle)
@@ -103,6 +100,7 @@ HRESULT StringDedupingProfiler::GarbageCollectionStartedCore(int cGenerations)
         {
             SIZE_T size;
             IfFailRet(this->corProfilerInfo->GetObjectSize2(curr, &size));
+
             auto methodTable = *(SIZE_T *)curr;
             auto flags = *(DWORD *)methodTable;
             bool containsPointerOrCollectible = (flags & 0x10000000) || (flags & 0x1000000);

@@ -90,8 +90,6 @@ class GCDesc
 
     void WalkObject(PBYTE addr, SIZE_T size, WalkObjectContext *context, WalkObjectFunc refCallback)
     {
-        printf("Walk\n");
-
         int32_t series = this->GetNumSeries();
         int32_t highest = this->GetHighestSeries();
         int32_t curr = highest;
